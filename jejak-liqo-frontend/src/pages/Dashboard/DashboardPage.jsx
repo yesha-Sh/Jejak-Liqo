@@ -18,14 +18,14 @@ const DashboardPage = () => {
   return (
     <Layout title="Dashboard">
       <div className="space-y-6">
-        <h3 className="text-xl font-medium text-gray-800">
+        <h1 className="text-xl font-semibold">
           Selamat Datang Kembali, {user?.full_name}!
-        </h3>
+        </h1>
 
         {/* Bagian ini hanya untuk Admin & Super Admin */}
         {(user?.role === 'admin' || user?.role === 'super_admin') && (
           <div>
-            <h4 className="text-lg font-semibold text-gray-700 mb-4">Statistik Umum</h4>
+            <h4 className="text-xl font-semibold">Statistik Umum</h4>
             {error && <p className="text-red-500">Gagal memuat statistik.</p>}
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               <StatCard 

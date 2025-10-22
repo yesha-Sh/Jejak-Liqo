@@ -44,7 +44,8 @@ Route::middleware('auth:sanctum')->group(function () {
 Route::middleware('auth:sanctum')->group(function () {
     // Download report langsung
     Route::get('/reports/download', [ReportController::class, 'download']);
-    
+    Route::get('/profile', [AuthController::class, 'profile']);
+    Route::post('/profile', [AuthController::class, 'updateProfile']);
     // Get groups & mentors untuk filter
     Route::get('/groups', [GroupController::class, 'index']);
     Route::get('/users', [UserController::class, 'index']);

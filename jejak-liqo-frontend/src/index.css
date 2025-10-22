@@ -4,8 +4,57 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  font-family: 'Inter', sans-serif;
-  background-color: #F9FAFB;
-  color: #1F2937;
+@layer base {
+  /* ===================================== */
+  /* == TEMA BARU: INTEGRASI LANDING PAGE == */
+  /* ===================================== */
+
+  /* 1. Definisikan Tema Terang (Light Skyblue - Mengambil dari Landing Page) */
+  :root {
+    /* Background utama sangat muda (mirip gradient landing page) */
+    --color-background: 240 249 255;  /* sky-50 */ 
+    /* Surface untuk Card/Sidebar/Header (putih bersih) */
+    --color-surface: 255 255 255;       /* white */
+    /* Teks utama gelap kebiruan */
+    --color-text: 17 24 39;            /* gray-900 (lebih netral dari sky-900) */
+    /* Teks sekunder/abu-abu */
+    --color-muted: 75 85 99;         /* gray-600 */
+    /* Border/garis pemisah yang lembut */
+    --color-border: 229 231 235;      /* gray-200 (lebih netral dari sky-100) */
+
+    /* Warna Primer: Gradasi Biru Langit (dari tombol landing page) */
+    /* NOTE: Variable ini mungkin tidak terpakai langsung jika button pakai gradasi */
+    --color-primary: 14 165 233;         /* sky-500 (warna tengah gradasi) */
+    --color-primary-hover: 2 132 199;  /* sky-600 */
+  }
+
+  /* 2. Definisikan Tema Gelap (Dark Navy - Terinspirasi Footer Landing Page) */
+  [data-theme="dark"] {
+    /* Background utama sangat gelap (mirip footer) */
+    --color-background: 15 23 42;       /* slate-900 */
+    /* Surface sedikit lebih terang */
+    --color-surface: 30 41 59;        /* slate-800 */
+    /* Teks utama terang */
+    --color-text: 248 250 252;         /* slate-50 */
+    /* Teks sekunder/abu-abu terang */
+    --color-muted: 156 163 175;       /* gray-400 */
+    /* Border/garis pemisah gelap */
+    --color-border: 51 65 85;         /* slate-700 */
+
+    /* Warna Primer: Biru Langit Cerah (agar kontras) */
+    --color-primary: 56 189 248;       /* sky-400 */
+    --color-primary-hover: 14 165 233; /* sky-500 */
+  }
+
+  /* 3. Terapkan warna dasar & transisi yang halus */
+  body {
+    background-color: rgb(var(--color-background));
+    color: rgb(var(--color-text));
+    @apply font-sans transition-colors duration-300; /* Pastikan font sans diterapkan */
+  }
+
+  /* 4. Perhalus transisi untuk semua komponen */
+  * {
+    @apply transition-colors duration-150;
+  }
 }

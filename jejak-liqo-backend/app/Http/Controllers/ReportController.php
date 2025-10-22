@@ -2,262 +2,326 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
+use App\Models\User;
+use App\Models\Group;
+use App\Models\Mentee;
 use App\Models\Meeting;
 use App\Models\Attendance;
-use App\Models\Group;
-use App\Models\User;
-use App\Models\Mentee;
+use Illuminate\Http\Request;
+use App\Traits\ApiResponse;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Maatwebsite\Excel\Facades\Excel;
+use App\Http\Requests\GenerateReportRequest;
 use App\Exports\ReportExport;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log; // <-- [PERBAIKAN] Tambahkan ini
 
 class ReportController extends Controller
 {
+    use ApiResponse;
+
     /**
-     * Download report langsung (PDF atau Excel)
+     * Download report based on type and filters.
      */
-    public function download(Request $request)
+    public function download(GenerateReportRequest $request)
     {
-        $request->validate([
-            'type' => 'required|in:attendance_summary,meeting_activity,mentor_performance,group_progress,monthly_recap',
-            'format' => 'required|in:pdf,xlsx',
-            'start_date' => 'required|date',
-            'end_date' => 'required|date|after_or_equal:start_date',
-            'group_id' => 'nullable|exists:groups,id',
-            'mentor_id' => 'nullable|exists:users,id',
-        ]);
+        // [PERBAIKAN] Bungkus semua logika dengan try...catch
+        try {
+            $type = $request->input('type', 'attendance_summary');
+            $format = $request->input('format', 'pdf');
+            
+            $data = $this->getReportData($request);
 
-        $type = $request->type;
-        $format = $request->input('format');
-        $startDate = Carbon::parse($request->start_date);
-        $endDate = Carbon::parse($request->end_date);
+            // [PERBAIKAN] Cek jika data kosong
+            if ($data->isEmpty()) {
+                return $this->sendError(
+                    'Data tidak ditemukan',
+                    ['message' => 'Tidak ada data yang cocok dengan kriteria filter Anda untuk laporan ini.'],
+                    404
+                );
+            }
 
-        // Get data berdasarkan tipe laporan
-        $data = $this->getReportData($type, $startDate, $endDate, $request->group_id, $request->mentor_id);
+            $title = $this->getReportTitle($type);
+            $filename = str_slug($title) . '-' . date('Y-m-d-His') . '.' . $format;
+            $view = 'reports.' . $type;
+            
+            $payload = [
+                'title' => $title,
+                'date' => Carbon::now()->format('d F Y'),
+                'data' => $data,
+                'filters' => $request->only(['start_date', 'end_date', 'group_id', 'mentor_id']),
+            ];
 
-        // Generate filename
-        $filename = "Laporan_{$type}_{$startDate->format('Y-m-d')}_{$endDate->format('Y-m-d')}";
+            if ($format == 'pdf') {
+                $pdf = Pdf::loadView($view, $payload)
+                    ->setPaper('a4', 'landscape');
+                
+                return $pdf->download($filename);
 
-        if ($format === 'pdf') {
-            return $this->generatePDF($type, $data, $filename);
-        } else {
-            return $this->generateExcel($type, $data, $filename);
+            } elseif ($format == 'excel') {
+                return Excel::download(new ReportExport($view, $payload), $filename);
+            }
+
+            // Fallback jika format tidak dikenal
+            return $this->sendError('Format Tidak Valid', ['message' => 'Format file yang diminta tidak didukung.'], 400);
+
+        } catch (\Exception $e) {
+            // [PERBAIKAN] Tangkap SEMUA exception
+            // Catat error untuk debugging
+            Log::error('Gagal membuat laporan: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'request' => $request->all()
+            ]);
+
+            // Kirim respons JSON yang jelas ke frontend
+            return $this->sendError(
+                'Gagal Membuat Laporan',
+                ['error' => 'Terjadi kesalahan internal saat memproses laporan Anda. Silakan coba lagi nanti atau hubungi administrator.', 'detail' => $e->getMessage()],
+                500
+            );
         }
     }
 
     /**
-     * Get data untuk laporan berdasarkan tipe
+     * Get data for the report.
      */
-    private function getReportData($type, $startDate, $endDate, $groupId = null, $mentorId = null)
+    private function getReportData(Request $request)
     {
-        switch ($type) {
-            case 'attendance_summary':
-                return $this->getAttendanceSummary($startDate, $endDate, $groupId, $mentorId);
+        // [PERBAIKAN] Bungkus dengan try...catch untuk keamanan query
+        try {
+            $type = $request->input('type', 'attendance_summary');
+            $startDate = $request->input('start_date');
+            $endDate = $request->input('end_date');
+            $groupId = $request->input('group_id');
+            $mentorId = $request->input('mentor_id');
+
+            // Default ke 30 hari terakhir jika tidak ada tanggal
+            if (!$startDate) {
+                $startDate = Carbon::now()->subDays(30)->toDateString();
+            }
+            if (!$endDate) {
+                $endDate = Carbon::now()->toDateString();
+            }
             
-            case 'meeting_activity':
-                return $this->getMeetingActivity($startDate, $endDate, $groupId, $mentorId);
+            $data = match ($type) {
+                'attendance_summary' => $this->getAttendanceSummary($startDate, $endDate, $groupId, $mentorId),
+                'meeting_activity' => $this->getMeetingActivity($startDate, $endDate, $groupId, $mentorId),
+                'group_progress' => $this->getGroupProgress($groupId),
+                'mentor_performance' => $this->getMentorPerformance($startDate, $endDate, $mentorId),
+                'monthly_recap' => $this->getMonthlyRecap($startDate, $endDate),
+                default => collect(),
+            };
             
-            case 'mentor_performance':
-                return $this->getMentorPerformance($startDate, $endDate, $mentorId);
-            
-            case 'group_progress':
-                return $this->getGroupProgress($startDate, $endDate, $groupId);
-            
-            case 'monthly_recap':
-                return $this->getMonthlyRecap($startDate, $endDate);
-            
-            default:
-                return [];
+            return $data;
+
+        } catch (\Exception $e) {
+            Log::error('Gagal mengambil data laporan: ' . $e->getMessage());
+            return collect(); // Kembalikan koleksi kosong agar ditangani oleh `download()`
         }
     }
 
-    /**
-     * Laporan Kehadiran
-     */
+    private function getReportTitle($type)
+    {
+        return match ($type) {
+            'attendance_summary' => 'Laporan Rekapitulasi Kehadiran',
+            'meeting_activity' => 'Laporan Aktivitas Pertemuan',
+            'group_progress' => 'Laporan Progres Kelompok',
+            'mentor_performance' => 'Laporan Kinerja Mentor',
+            'monthly_recap' => 'Laporan Rekap Bulanan',
+            default => 'Laporan Kustom',
+        };
+    }
+
+    // --- METODE PENGAMBILAN DATA ---
+
     private function getAttendanceSummary($startDate, $endDate, $groupId, $mentorId)
     {
-        $query = Attendance::with(['meeting', 'mentee', 'meeting.group'])
-            ->whereHas('meeting', function($q) use ($startDate, $endDate, $groupId, $mentorId) {
-                $q->whereBetween('meeting_date', [$startDate, $endDate]);
-                if ($groupId) {
-                    $q->where('group_id', $groupId);
-                }
-                if ($mentorId) {
-                    $q->where('mentor_id', $mentorId);
-                }
+        // Ambil mentee dengan status dan grup mereka
+        $query = Mentee::with(['group', 'user', 'attendances' => function ($q) use ($startDate, $endDate) {
+                $q->whereBetween('date', [$startDate, $endDate]);
+            }])
+            ->where('status', 'active');
+        
+        if ($groupId) {
+            $query->where('group_id', $groupId);
+        }
+
+        if ($mentorId) {
+            $query->whereHas('group', function ($q) use ($mentorId) {
+                $q->where('mentor_id', $mentorId);
             });
+        }
 
-        $attendances = $query->get();
+        // Ambil semua mentee yang relevan
+        $mentees = $query->get();
 
-        // Hitung statistik
-        $stats = [
-            'total' => $attendances->count(),
-            'hadir' => $attendances->where('status', 'Hadir')->count(),
-            'izin' => $attendances->where('status', 'Izin')->count(),
-            'sakit' => $attendances->where('status', 'Sakit')->count(),
-            'alfa' => $attendances->where('status', 'Alfa')->count(),
-        ];
+        // Ambil jumlah pertemuan dalam rentang tanggal
+        $meetingsCountQuery = Meeting::whereBetween('date', [$startDate, $endDate]);
+        if ($groupId) {
+            $meetingsCountQuery->where('group_id', $groupId);
+        }
+        if ($mentorId) {
+            $meetingsCountQuery->whereHas('group', function ($q) use ($mentorId) {
+                $q->where('mentor_id', $mentorId);
+            });
+        }
+        $totalMeetings = $meetingsCountQuery->count();
 
-        $stats['percentage_hadir'] = $stats['total'] > 0 
-            ? round(($stats['hadir'] / $stats['total']) * 100, 2) 
-            : 0;
+        // Proses data
+        $summary = $mentees->map(function ($mentee) use ($totalMeetings) {
+            $present = $mentee->attendances->where('status', 'present')->count();
+            $absent = $mentee->attendances->where('status', 'absent')->count();
+            $permit = $mentee->attendances->where('status', 'permit')->count();
+            
+            // Hitung persentase
+            $percentage = $totalMeetings > 0 ? ($present / $totalMeetings) * 100 : 0;
 
-        return [
-            'title' => 'Laporan Kehadiran Mentee',
-            'period' => $startDate->format('d M Y') . ' - ' . $endDate->format('d M Y'),
-            'attendances' => $attendances,
-            'stats' => $stats,
-        ];
+            return [
+                'mentee_name' => $mentee->user->name,
+                'group_name' => $mentee->group->name,
+                'total_meetings' => $totalMeetings,
+                'present' => $present,
+                'absent' => $absent,
+                'permit' => $permit,
+                'percentage' => round($percentage, 2) . '%',
+            ];
+        });
+
+        return $summary;
     }
 
-    /**
-     * Laporan Aktivitas Pertemuan
-     */
     private function getMeetingActivity($startDate, $endDate, $groupId, $mentorId)
     {
-        $query = Meeting::with(['group', 'mentor', 'attendances.mentee'])
-            ->whereBetween('meeting_date', [$startDate, $endDate]);
+        $query = Meeting::with(['group.mentor', 'attendances'])
+            ->whereBetween('date', [$startDate, $endDate]);
 
         if ($groupId) {
             $query->where('group_id', $groupId);
         }
-        if ($mentorId) {
-            $query->where('mentor_id', $mentorId);
-        }
-
-        $meetings = $query->orderBy('meeting_date', 'desc')->get();
-
-        return [
-            'title' => 'Laporan Aktivitas Pertemuan',
-            'period' => $startDate->format('d M Y') . ' - ' . $endDate->format('d M Y'),
-            'meetings' => $meetings,
-            'total_meetings' => $meetings->count(),
-            'total_online' => $meetings->where('meeting_type', 'Online')->count(),
-            'total_offline' => $meetings->where('meeting_type', 'Offline')->count(),
-        ];
-    }
-
-    /**
-     * Laporan Kinerja Mentor
-     */
-    private function getMentorPerformance($startDate, $endDate, $mentorId)
-    {
-        $query = User::where('role', 'mentor')
-            ->with(['groups', 'meetings' => function($q) use ($startDate, $endDate) {
-                $q->whereBetween('meeting_date', [$startDate, $endDate]);
-            }]);
 
         if ($mentorId) {
-            $query->where('id', $mentorId);
+            $query->whereHas('group', function ($q) use ($mentorId) {
+                $q->where('mentor_id', $mentorId);
+            });
         }
 
-        $mentors = $query->get()->map(function($mentor) {
+        return $query->orderBy('date', 'desc')->get()->map(function ($meeting) {
             return [
-                'name' => $mentor->full_name,
-                'email' => $mentor->email,
-                'total_groups' => $mentor->groups->count(),
-                'total_meetings' => $mentor->meetings->count(),
-                'meetings' => $mentor->meetings,
+                'date' => $meeting->date,
+                'group_name' => $meeting->group->name,
+                'mentor_name' => $meeting->group->mentor->name,
+                'title' => $meeting->title,
+                'description' => $meeting->description,
+                'attendance_count' => $meeting->attendances->where('status', 'present')->count() . ' / ' . $meeting->group->mentees_count, // Asumsi ada mentees_count
             ];
         });
-
-        return [
-            'title' => 'Laporan Kinerja Mentor',
-            'period' => $startDate->format('d M Y') . ' - ' . $endDate->format('d M Y'),
-            'mentors' => $mentors,
-        ];
     }
-
-    /**
-     * Laporan Progress Kelompok
-     */
-    private function getGroupProgress($startDate, $endDate, $groupId)
+    
+    private function getGroupProgress($groupId)
     {
-        $query = Group::with([
-            'mentor',
-            'mentees',
-            'meetings' => function($q) use ($startDate, $endDate) {
-                $q->whereBetween('meeting_date', [$startDate, $endDate]);
-            }
-        ]);
+        $query = Group::with(['mentor', 'mentees.user', 'meetings']);
 
         if ($groupId) {
             $query->where('id', $groupId);
         }
 
-        $groups = $query->get()->map(function($group) {
+        return $query->get()->map(function ($group) {
             $totalMeetings = $group->meetings->count();
-            $totalMentees = $group->mentees->count();
-            
+            $avgAttendance = 0;
+            if ($totalMeetings > 0 && $group->mentees->count() > 0) {
+                $totalPresent = $group->meetings->reduce(function ($carry, $meeting) {
+                    return $carry + $meeting->attendances->where('status', 'present')->count();
+                }, 0);
+                $avgAttendance = ($totalPresent / ($totalMeetings * $group->mentees->count())) * 100;
+            }
+
             return [
-                'name' => $group->group_name,
-                'mentor' => $group->mentor->full_name,
-                'total_mentees' => $totalMentees,
+                'group_name' => $group->name,
+                'mentor_name' => $group->mentor->name,
+                'total_mentees' => $group->mentees->count(),
                 'total_meetings' => $totalMeetings,
-                'meetings' => $group->meetings,
-                'mentees' => $group->mentees,
+                'avg_attendance' => round($avgAttendance, 2) . '%',
+                'mentees' => $group->mentees->map(fn ($m) => $m->user->name)->implode(', '),
             ];
         });
-
-        return [
-            'title' => 'Laporan Progress Kelompok',
-            'period' => $startDate->format('d M Y') . ' - ' . $endDate->format('d M Y'),
-            'groups' => $groups,
-        ];
     }
 
-    /**
-     * Rekap Bulanan (Format UPA PAS-PAA)
-     */
+    private function getMentorPerformance($startDate, $endDate, $mentorId)
+    {
+        $query = User::where('role', 'mentor')
+            ->with(['groups.meetings' => function ($q) use ($startDate, $endDate) {
+                $q->whereBetween('date', [$startDate, $endDate]);
+            }, 'groups.mentees']);
+
+        if ($mentorId) {
+            $query->where('id', $mentorId);
+        }
+
+        return $query->get()->map(function ($mentor) {
+            $totalMeetings = 0;
+            $totalMentees = 0;
+            $totalPresent = 0;
+            
+            foreach ($mentor->groups as $group) {
+                $totalMeetings += $group->meetings->count();
+                $totalMentees += $group->mentees->count();
+                foreach ($group->meetings as $meeting) {
+                    $totalPresent += $meeting->attendances->where('status', 'present')->count();
+                }
+            }
+
+            $avgAttendance = ($totalMeetings > 0 && $totalMentees > 0) 
+                ? ($totalPresent / ($totalMeetings * $totalMentees)) * 100 
+                : 0;
+
+            return [
+                'mentor_name' => $mentor->name,
+                'total_groups' => $mentor->groups->count(),
+                'total_meetings' => $totalMeetings,
+                'total_mentees' => $totalMentees,
+                'avg_attendance' => round($avgAttendance, 2) . '%',
+            ];
+        });
+    }
+
     private function getMonthlyRecap($startDate, $endDate)
     {
-        $meetings = Meeting::with(['group', 'mentor', 'attendances.mentee'])
-            ->whereBetween('meeting_date', [$startDate, $endDate])
-            ->orderBy('meeting_date', 'desc')
-            ->get();
+        // Contoh rekap sederhana
+        $totalUsers = User::count();
+        $totalGroups = Group::count();
+        $totalMentees = Mentee::where('status', 'active')->count();
+        $totalMeetings = Meeting::whereBetween('date', [$startDate, $endDate])->count();
+        $totalPresent = Attendance::whereBetween('date', [$startDate, $endDate])
+            ->where('status', 'present')->count();
+        $totalAbsent = Attendance::whereBetween('date', [$startDate, $endDate])
+            ->where('status', 'absent')->count();
 
-        $groups = Group::with(['mentor', 'mentees'])->get();
-
-        $stats = [
-            'total_meetings' => $meetings->count(),
-            'total_groups' => $groups->count(),
-            'total_mentees' => Mentee::count(),
-            'total_mentors' => User::where('role', 'mentor')->count(),
-        ];
-
-        return [
-            'title' => 'LAPORAN UPA PAS-PAA',
-            'subtitle' => $startDate->format('F') . ' - ' . $endDate->format('F Y'),
-            'period' => $startDate->format('d M Y') . ' - ' . $endDate->format('d M Y'),
-            'meetings' => $meetings,
-            'groups' => $groups,
-            'stats' => $stats,
-        ];
-    }
-
-    /**
-     * Generate PDF
-     */
-    private function generatePDF($type, $data, $filename)
-    {
-        $pdf = Pdf::loadView("reports.{$type}", $data)
-            ->setPaper('a4', 'portrait')
-            ->setOption('margin-top', 10)
-            ->setOption('margin-bottom', 10);
-
-        return $pdf->download("{$filename}.pdf");
-    }
-
-    /**
-     * Generate Excel
-     */
-    private function generateExcel($type, $data, $filename)
-    {
-        return Excel::download(
-            new ReportExport($type, $data), 
-            "{$filename}.xlsx"
-        );
+        return collect([
+            (object) [
+                'metric' => 'Total Pengguna',
+                'value' => $totalUsers
+            ],
+            (object) [
+                'metric' => 'Total Kelompok',
+                'value' => $totalGroups
+            ],
+            (object) [
+                'metric' => 'Total Mentee Aktif',
+                'value' => $totalMentees
+            ],
+            (object) [
+                'metric' => 'Total Pertemuan (periode)',
+                'value' => $totalMeetings
+            ],
+            (object) [
+                'metric' => 'Total Kehadiran (periode)',
+                'value' => $totalPresent
+            ],
+            (object) [
+                'metric' => 'Total Absen (periode)',
+                'value' => $totalAbsent
+            ],
+        ]);
     }
 }

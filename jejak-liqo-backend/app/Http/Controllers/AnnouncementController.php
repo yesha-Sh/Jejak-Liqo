@@ -6,7 +6,9 @@ use App\Http\Requests\StoreAnnouncementRequest;
 use App\Models\Announcement;
 use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
+use App\Http\Requests\UpdateAnnouncementRequest;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
+use App\Http\Resources\AnnouncementResource;
 
 class AnnouncementController extends Controller
 {
@@ -45,15 +47,45 @@ class AnnouncementController extends Controller
     /**
      * Remove the specified resource from storage.
      */
+   /**
+     * Remove the specified resource from storage.
+     */
     public function destroy(Announcement $announcement)
     {
         $announcementTitle = $announcement->title;
         $announcementId = $announcement->id;
 
-        $this->authorize('delete', $announcement); 
+        // [PERBAIKAN] Ganti kode $this->authorize dengan pengecekan role manual
+        $user = auth()->user();
+        if ($user->role !== 'admin' && $user->role !== 'super_admin') {
+             return $this->error('Anda tidak memiliki izin untuk menghapus pengumuman.', 403);
+        }
+        // [AKHIR PERBAIKAN]
 
         $announcement->delete();
         ActivityLogger::log('delete', 'announcement', $announcementId, "Menghapus pengumuman: {$announcementTitle}");
         return $this->success(null, 'Pengumuman berhasil dihapus.');
     }
+    public function update(UpdateAnnouncementRequest $request, Announcement $announcement)
+{
+    // Otorisasi user menggunakan policy
+    $this->authorize('update', $announcement);
+
+    try {
+        // Validasi sudah dilakukan oleh UpdateAnnouncementRequest
+        $validated = $request->validated();
+
+        $announcement->update($validated);
+
+        // Log aktivitas
+        ActivityLogger::log('Updated announcement: ' . $announcement->title, $request->user()->id);
+
+        return $this->sendResponse(
+            new AnnouncementResource($announcement),
+            'Announcement updated successfully.'
+        );
+    } catch (\Exception $e) {
+        return $this->sendError('Update Failed', ['error' => $e->getMessage()], 500);
+    }
+}
 }

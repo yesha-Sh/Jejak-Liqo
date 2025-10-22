@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import Input from '../ui/Input';
 import Button from '../ui/Button';
-import Card from '../ui/Card'; 
+import Card from '../ui/Card'; // Pastikan Card sudah di-import
 
 const announcementSchema = z.object({
   title: z.string().min(5, 'Judul minimal 5 karakter'),
@@ -24,7 +24,8 @@ const AnnouncementForm = ({ onSubmit, isLoading }) => {
   return (
     <Card>
       <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
-        <h3 className="text-lg font-semibold">Buat Pengumuman Baru</h3>
+        {/* ✅ Gunakan text-text */}
+        <h3 className="text-lg font-semibold text-text">Buat Pengumuman Baru</h3>
         <Input
           id="title"
           label="Judul"
@@ -32,13 +33,17 @@ const AnnouncementForm = ({ onSubmit, isLoading }) => {
           error={errors.title}
         />
         <div>
-           <label htmlFor="content" className="block text-sm font-medium text-gray-700">
+           {/* ✅ Gunakan text-muted */}
+           <label htmlFor="content" className="block text-sm font-medium text-muted">
              Isi Pengumuman
            </label>
            <textarea
              id="content"
              rows={4}
-             className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm ${errors.content ? 'border-red-500' : 'border-gray-300'}`}
+             // ✅ Gunakan bg-surface, border-border, text-text
+             className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm bg-surface border-border text-text ${
+               errors.content ? 'border-red-500' : 'border-border' // Border error tetap merah
+              }`}
              {...register('content')}
            ></textarea>
             {errors.content && <p className="mt-1 text-xs text-red-500">{errors.content.message}</p>}

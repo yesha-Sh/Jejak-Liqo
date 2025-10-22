@@ -3,15 +3,17 @@ import React from 'react';
 const Select = React.forwardRef(({ label, id, error, children, ...props }, ref) => {
   return (
     <div>
-      <label htmlFor={id} className="block text-sm font-medium text-gray-700">
+      {/* ✅ text-muted */}
+      <label htmlFor={id} className="block text-sm font-medium text-muted">
         {label}
       </label>
       <div className="mt-1">
         <select
           id={id}
           ref={ref}
-          className={`block w-full px-3 py-2 border rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm ${
-            error ? 'border-red-500' : 'border-gray-300'
+          // ✅ bg-surface, border-border, text-text
+          className={`block w-full px-3 py-2 border rounded-md shadow-sm focus:ring-primary focus:border-primary sm:text-sm bg-surface border-border text-text ${
+            error ? 'border-red-500' : 'border-border'
           }`}
           {...props}
         >
